@@ -66,6 +66,47 @@ async function run() {
             res.send(result);
         })
 
+        // GET single book by ID
+        app.get('/books/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+                if (!book) return res.status(404).send({ message: 'Book not found' });
+                res.send(book);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Error fetching book' });
+            }
+        });
+
+        // PUT update book by ID
+        app.put('/books/:id', async (req, res) => {
+            const id = req.params.id;
+            const updatedBook = req.body;
+            try {
+                const result = await booksCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updatedBook }
+                );
+                res.send(result);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Error updating book' });
+            }
+        });
+
+        // DELETE book by ID
+        app.delete('/books/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Error deleting book' });
+            }
+        });
+
 
 
         // Send a ping to confirm a successful connection
