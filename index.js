@@ -36,20 +36,20 @@ async function run() {
         const booksCollection = db.collection('books');
         const usersCollection = db.collection('users')
 
-        // login users API from login 
+        // users related apis
         app.post('/users', async (req, res) => {
-            const newUser = req.body;
-            const email = req.body.email;
-            const query = { email: email }
-            const existingUser = await usersCollection.findOne(query);
+            const user = req.body;
+            user.role = 'user';
+            user.createdAt = new Date();
+            const email = user.email;
+            const userExists = await usersCollection.findOne({ email })
 
-            if (existingUser) {
-                res.send({ message: 'user already exits. do not need to insert again' })
+            if (userExists) {
+                return res.send({ message: 'user exists' })
             }
-            else {
-                const result = await usersCollection.insertOne(newUser);
-                res.send(result);
-            }
+
+            const result = await usersCollection.insertOne(user);
+            res.send(result);
         })
 
         // Post--send data to db 
@@ -62,6 +62,7 @@ async function run() {
         // Get all books
         app.get('/books', async (req, res) => {
             const cursor = booksCollection.find();
+            console.log('headers', req.headers)
             const result = await cursor.toArray();
             res.send(result);
         })
