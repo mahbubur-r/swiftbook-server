@@ -76,6 +76,8 @@ async function run() {
         // users related apis
         app.post('/users', async (req, res) => {
             const user = req.body;
+            console.log('user received', user)
+            const photoURL = req.body.photoURL;
             user.role = 'user';
             user.createdAt = new Date();
             const email = user.email;
@@ -84,8 +86,18 @@ async function run() {
             if (userExists) {
                 return res.send({ message: 'user exists' })
             }
-
+            user.photoURL = photoURL || null
             const result = await usersCollection.insertOne(user);
+            res.send(result);
+        })
+        app.get('/users', async (req, res) => {
+            const cursor = usersCollection.find();
+            const result = await cursor.toArray();
+            res.send(result);
+        })
+        app.delete('/users/:id', async (req, res) => {
+            const id = req.params.id;
+            const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
             res.send(result);
         })
 
