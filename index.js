@@ -11,6 +11,43 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// JST verify
+// const verifyFBToken = (req, res, next) => {
+//     // console.log('token in the middleware', req.headers.authorization)
+//     const token = req.headers.authorization.split(' ')[1];
+//     console.log('token', token)
+//     if (!token) {
+//         return res.status(401).send({ message: 'Unauthorized' })
+//     }
+//     next()
+// }
+
+const verifyFBToken = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    // 1. Check header exists
+    if (!authHeader) {
+        return res.status(401).json({ message: 'No Authorization header found' });
+    }
+
+    // 2. Check format is correct (Bearer token)
+    if (!authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: 'Invalid Authorization format' });
+    }
+
+    // 3. Extract token safely
+    const token = authHeader.split(" ")[1];
+
+    if (!token) {
+        return res.status(401).json({ message: 'Token missing' });
+    }
+
+    console.log("token", token);
+
+    next();
+};
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xr2sv5h.mongodb.net/?appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -60,7 +97,7 @@ async function run() {
         })
 
         // Get all books
-        app.get('/books', async (req, res) => {
+        app.get('/books', verifyFBToken, async (req, res) => {
             const cursor = booksCollection.find();
             console.log('headers', req.headers)
             const result = await cursor.toArray();
