@@ -72,6 +72,7 @@ async function run() {
         // database collections
         const booksCollection = db.collection('books');
         const usersCollection = db.collection('users')
+        const ordersCollection = db.collection('orders')
 
         // users related apis
         app.post('/users', async (req, res) => {
@@ -157,7 +158,31 @@ async function run() {
             }
         });
 
+        // Orders related apis
+        app.post('/orders', async (req, res) => {
+            const customerName = req.body.customerName;
+            const customerEmail = req.body.customerEmail;
+            const order = req.body;
+            order.createdAt = new Date();
+            order.customerName = customerName;
+            order.customerEmail = customerEmail;
+            order.status = 'pending';
+            order.paymentStatus = 'pending';
+            const result = await ordersCollection.insertOne(order);
+            res.send(result);
+        })
+        app.get('/orders/:email', async (req, res) => {
+            const email = req.params.email;
+            const result = await ordersCollection.find({ customerEmail: email }).toArray();
+            res.send(result);
+        });
 
+
+        app.get('/orders', async (req, res) => {
+            const cursor = ordersCollection.find();
+            const result = await cursor.toArray();
+            res.send(result);
+        });
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
