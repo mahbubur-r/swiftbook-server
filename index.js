@@ -96,6 +96,19 @@ async function run() {
             const result = await cursor.toArray();
             res.send(result);
         })
+        app.patch('/users/role/:id', async (req, res) => {
+            const id = req.params.id;
+            const { role } = req.body; // role = "admin" or "librarian"
+
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: { role: role }
+            };
+
+            const result = await usersCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
         app.delete('/users/:id', async (req, res) => {
             const id = req.params.id;
             const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
