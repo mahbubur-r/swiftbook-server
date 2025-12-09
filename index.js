@@ -122,13 +122,22 @@ async function run() {
             res.send(result)
         })
 
-        // Get all books
+        // // Get all books
         app.get('/books', verifyFBToken, async (req, res) => {
             const cursor = booksCollection.find();
             console.log('headers', req.headers)
             const result = await cursor.toArray();
             res.send(result);
         })
+
+        // Get all books (only Published)
+        app.get('/books/published', async (req, res) => {
+            const cursor = booksCollection.find({ status: "published" });// published filter her
+            console.log('headers', req.headers)
+            const result = await cursor.toArray();
+            res.send(result);
+        });
+
 
         // GET single book by ID
         app.get('/books/:id', async (req, res) => {
@@ -195,6 +204,17 @@ async function run() {
             const cursor = ordersCollection.find();
             const result = await cursor.toArray();
             res.send(result);
+        });
+        // DELETE order by ID
+        app.delete('/orders/:id', async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await ordersCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: 'Error deleting order' });
+            }
         });
 
         // Send a ping to confirm a successful connection
