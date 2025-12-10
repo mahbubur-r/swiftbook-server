@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 // ======================================================
-// FIREBASE ADMIN SETUP (FIXED)
+// FIREBASE ADMIN SETUP
 // ======================================================
 const admin = require("firebase-admin");
 const serviceAccount = require("./swiftbook-adminsdk.json");
@@ -122,6 +122,14 @@ async function run() {
             res.send(result);
         });
 
+        // ➤ Get user role (public)
+        app.get('/users/:email/role', async (req, res) => {
+            const email = req.params.email;
+            const query = { email }
+            const user = await usersCollection.findOne(query);
+            res.send({ role: user?.role || 'user' })
+        })
+
         // ➤ Update role (admin only)
         app.patch('/users/role/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             const { id } = req.params;
@@ -168,7 +176,7 @@ async function run() {
         });
 
         // ➤ Published books (public)
-        app.get('/books/published', verifyFBToken, async (req, res) => {
+        app.get('/books/published', async (req, res) => {
             const result = await booksCollection.find({ status: "published" }).toArray();
             res.send(result);
         });
@@ -180,7 +188,7 @@ async function run() {
         });
 
         // ➤ Single book
-        app.get('/books/:id', verifyFBToken, async (req, res) => {
+        app.get('/books/published/:id', async (req, res) => {
             try {
                 const book = await booksCollection.findOne({ _id: new ObjectId(req.params.id) });
                 if (!book) return res.status(404).send({ message: "book not found" });
