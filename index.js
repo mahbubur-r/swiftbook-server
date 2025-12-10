@@ -137,6 +137,11 @@ async function run() {
             const result = await cursor.toArray();
             res.send(result);
         });
+        app.get('/books/:email', async (req, res) => {
+            const email = req.params.email;
+            const result = await booksCollection.find({ librarianEmail: email }).toArray();
+            res.send(result);
+        });
 
 
         // GET single book by ID
@@ -189,7 +194,7 @@ async function run() {
             order.customerName = customerName;
             order.customerEmail = customerEmail;
             order.status = 'pending';
-            order.paymentStatus = 'pending';
+            order.paymentStatus = 'unpaid';
             const result = await ordersCollection.insertOne(order);
             res.send(result);
         })
