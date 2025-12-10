@@ -1,239 +1,258 @@
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config()
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
+require('dotenv').config();
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000;
 
-// console.log(process.env);
-
-// middleware
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// JST verify
-// const verifyFBToken = (req, res, next) => {
-//     // console.log('token in the middleware', req.headers.authorization)
-//     const token = req.headers.authorization.split(' ')[1];
-//     console.log('token', token)
-//     if (!token) {
-//         return res.status(401).send({ message: 'Unauthorized' })
-//     }
-//     next()
-// }
+// ======================================================
+// FIREBASE ADMIN SETUP (FIXED)
+// ======================================================
+const admin = require("firebase-admin");
+const serviceAccount = require("./swiftbook-adminsdk.json");
 
-const verifyFBToken = (req, res, next) => {
-    const authHeader = req.headers.authorization;
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+});
 
-    // 1. Check header exists
-    if (!authHeader) {
-        return res.status(401).json({ message: 'No Authorization header found' });
+// ======================================================
+// TOKEN VERIFICATION MIDDLEWARE
+// ======================================================
+const verifyFBToken = async (req, res, next) => {
+    if (!req.headers.authorization) {
+        return res.status(401).send({ message: 'unauthorized access' });
     }
 
-    // 2. Check format is correct (Bearer token)
-    if (!authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({ message: 'Invalid Authorization format' });
+    const token = req.headers.authorization.split(' ')[1];
+
+    try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        req.decoded_email = decoded.email; // store email for later
+        next();
+    } catch (error) {
+        return res.status(401).send({ message: 'invalid token' });
     }
-
-    // 3. Extract token safely
-    const token = authHeader.split(" ")[1];
-
-    if (!token) {
-        return res.status(401).json({ message: 'Token missing' });
-    }
-
-    console.log("token", token);
-
-    next();
 };
 
-
+// ======================================================
+// MONGODB CONNECTION
+// ======================================================
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xr2sv5h.mongodb.net/?appName=Cluster0`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
         strict: true,
         deprecationErrors: true,
-    }
+    },
 });
-// normal get
-app.get('/', (req, res) => {
-    res.send('SwiftBook server is running')
-})
+
+// ======================================================
+// SERVER START
+// ======================================================
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
-
-        // Send the info to the db
         const db = client.db('swiftbook_db');
-        // database collections
-        const booksCollection = db.collection('books');
-        const usersCollection = db.collection('users')
-        const ordersCollection = db.collection('orders')
 
-        // users related apis
+        const booksCollection = db.collection('books');
+        const usersCollection = db.collection('users');
+        const ordersCollection = db.collection('orders');
+
+        // ======================================================
+        // ROLE MIDDLEWARES
+        // ======================================================
+
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded_email;
+            const user = await usersCollection.findOne({ email });
+
+            if (!user || user.role !== "admin") {
+                return res.status(403).send({ message: "forbidden access" });
+            }
+            next();
+        };
+
+        const verifyLibrarian = async (req, res, next) => {
+            const email = req.decoded_email;
+            const user = await usersCollection.findOne({ email });
+
+            if (!user || (user.role !== "librarian" && user.role !== "admin")) {
+                return res.status(403).send({ message: "forbidden access" });
+            }
+            next();
+        };
+
+        const verifyAdminOrLibrarian = async (req, res, next) => {
+            const email = req.decoded_email;
+            const user = await usersCollection.findOne({ email });
+
+            if (!user || (user.role !== "admin" && user.role !== "librarian")) {
+                return res.status(403).send({ message: "Admin or Librarian access only" });
+            }
+
+            next();
+        };
+
+
+        // ============================================================
+        // USERS ROUTES
+        // ============================================================
+
+        // ➤ Create User (public)
         app.post('/users', async (req, res) => {
             const user = req.body;
-            console.log('user received', user)
-            const photoURL = req.body.photoURL;
-            user.role = 'user';
+            user.role = "user";
             user.createdAt = new Date();
-            const email = user.email;
-            const userExists = await usersCollection.findOne({ email })
 
-            if (userExists) {
-                return res.send({ message: 'user exists' })
-            }
-            user.photoURL = photoURL || null
+            const exists = await usersCollection.findOne({ email: user.email });
+            if (exists) return res.send({ message: "user exists" });
+
             const result = await usersCollection.insertOne(user);
             res.send(result);
-        })
-        app.get('/users', async (req, res) => {
-            const cursor = usersCollection.find();
-            const result = await cursor.toArray();
-            res.send(result);
-        })
-        app.patch('/users/role/:id', async (req, res) => {
-            const id = req.params.id;
-            const { role } = req.body; // role = "admin" or "librarian"
+        });
 
-            const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: { role: role }
-            };
-
-            const result = await usersCollection.updateOne(filter, updateDoc);
+        // ➤ Get all users (admin only)
+        app.get('/users', verifyFBToken, verifyAdmin, async (req, res) => {
+            const result = await usersCollection.find().toArray();
             res.send(result);
         });
 
-        app.delete('/users/:id', async (req, res) => {
-            const id = req.params.id;
-            const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
-            res.send(result);
-        })
+        // ➤ Update role (admin only)
+        app.patch('/users/role/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+            const { id } = req.params;
+            const { role } = req.body;
 
-        // Post--send data to db 
-        app.post('/books', async (req, res) => {
-            const newBook = req.body;
-            const result = await booksCollection.insertOne(newBook);
-            res.send(result)
-        })
-
-        // // Get all books
-        app.get('/books', verifyFBToken, async (req, res) => {
-            const cursor = booksCollection.find();
-            console.log('headers', req.headers)
-            const result = await cursor.toArray();
-            res.send(result);
-        })
-
-        // Get all books (only Published)
-        app.get('/books/published', async (req, res) => {
-            const cursor = booksCollection.find({ status: "published" });// published filter her
-            console.log('headers', req.headers)
-            const result = await cursor.toArray();
-            res.send(result);
-        });
-        app.get('/books/:email', async (req, res) => {
-            const email = req.params.email;
-            const result = await booksCollection.find({ librarianEmail: email }).toArray();
+            const result = await usersCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role } }
+            );
             res.send(result);
         });
 
+        // ➤ Delete user (admin only)
+        app.delete('/users/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+            const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+            res.send(result);
+        });
 
-        // GET single book by ID
-        app.get('/books/:id', async (req, res) => {
-            const id = req.params.id;
+        // ============================================================
+        // BOOKS ROUTES
+        // ============================================================
+
+        // ➤ Create book (librarian or admin only)
+        app.post('/books', verifyFBToken, verifyAdminOrLibrarian, async (req, res) => {
+            const book = req.body;
+            const result = await booksCollection.insertOne(book);
+            res.send(result);
+        });
+
+        // ➤ Get books (dynamic based on role)
+        app.get('/books', verifyFBToken, verifyAdminOrLibrarian, async (req, res) => {
+            const email = req.decoded_email;
+            const user = await usersCollection.findOne({ email });
+
+            let result;
+
+            if (user.role === "admin" || user.role === "librarian") {
+                result = await booksCollection.find().toArray();
+            } else {
+                result = await booksCollection.find({ status: "published" }).toArray();
+            }
+
+            res.send(result);
+        });
+
+        // ➤ Published books (public)
+        app.get('/books/published', verifyFBToken, async (req, res) => {
+            const result = await booksCollection.find({ status: "published" }).toArray();
+            res.send(result);
+        });
+
+        // ➤ Get books added by librarian
+        app.get('/books/by-user/:email', verifyFBToken, verifyAdminOrLibrarian, async (req, res) => {
+            const result = await booksCollection.find({ librarianEmail: req.params.email }).toArray();
+            res.send(result);
+        });
+
+        // ➤ Single book
+        app.get('/books/:id', verifyFBToken, async (req, res) => {
             try {
-                const book = await booksCollection.findOne({ _id: new ObjectId(id) });
-                if (!book) return res.status(404).send({ message: 'Book not found' });
+                const book = await booksCollection.findOne({ _id: new ObjectId(req.params.id) });
+                if (!book) return res.status(404).send({ message: "book not found" });
                 res.send(book);
-            } catch (error) {
-                console.error(error);
-                res.status(500).send({ message: 'Error fetching book' });
+            } catch {
+                res.status(400).send({ message: "invalid book id" });
             }
         });
 
-        // PUT update book by ID
-        app.put('/books/:id', async (req, res) => {
-            const id = req.params.id;
-            const updatedBook = req.body;
-            try {
-                const result = await booksCollection.updateOne(
-                    { _id: new ObjectId(id) },
-                    { $set: updatedBook }
-                );
-                res.send(result);
-            } catch (error) {
-                console.error(error);
-                res.status(500).send({ message: 'Error updating book' });
-            }
+        // ➤ Update book (librarian/admin)
+        app.put('/books/:id', verifyFBToken, verifyAdminOrLibrarian, async (req, res) => {
+            const result = await booksCollection.updateOne(
+                { _id: new ObjectId(req.params.id) },
+                { $set: req.body }
+            );
+            res.send(result);
         });
 
-        // DELETE book by ID
-        app.delete('/books/:id', async (req, res) => {
-            const id = req.params.id;
-            try {
-                const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
-                res.send(result);
-            } catch (error) {
-                console.error(error);
-                res.status(500).send({ message: 'Error deleting book' });
-            }
+        // ➤ Delete book (admin only)
+        app.delete('/books/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+            const result = await booksCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+            res.send(result);
         });
 
-        // Orders related apis
-        app.post('/orders', async (req, res) => {
-            const customerName = req.body.customerName;
-            const customerEmail = req.body.customerEmail;
+        // ============================================================
+        // ORDERS ROUTES
+        // ============================================================
+
+        // ➤ Create order
+        app.post('/orders', verifyFBToken, async (req, res) => {
             const order = req.body;
             order.createdAt = new Date();
-            order.customerName = customerName;
-            order.customerEmail = customerEmail;
-            order.status = 'pending';
-            order.paymentStatus = 'unpaid';
+            order.status = "pending";
+            order.paymentStatus = "unpaid";
+
             const result = await ordersCollection.insertOne(order);
             res.send(result);
-        })
-        app.get('/orders/:email', async (req, res) => {
-            const email = req.params.email;
-            const result = await ordersCollection.find({ customerEmail: email }).toArray();
-            res.send(result);
         });
 
-
-        app.get('/orders', async (req, res) => {
-            const cursor = ordersCollection.find();
-            const result = await cursor.toArray();
-            res.send(result);
-        });
-        // DELETE order by ID
-        app.delete('/orders/:id', async (req, res) => {
-            const id = req.params.id;
-            try {
-                const result = await ordersCollection.deleteOne({ _id: new ObjectId(id) });
-                res.send(result);
-            } catch (error) {
-                console.error(error);
-                res.status(500).send({ message: 'Error deleting order' });
+        // ➤ Get orders by customer email (only self)
+        app.get('/orders/:email', verifyFBToken, async (req, res) => {
+            if (req.params.email !== req.decoded_email) {
+                return res.status(403).send({ message: "forbidden access" });
             }
+            const result = await ordersCollection.find({ customerEmail: req.params.email }).toArray();
+            res.send(result);
         });
 
-        // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } catch (error) {
-        console.error("Error connecting to MongoDB:", error);
+        // ➤ Get all orders (admin only)
+        app.get('/orders', verifyFBToken, verifyLibrarian, async (req, res) => {
+            const result = await ordersCollection.find().toArray();
+            res.send(result);
+        });
+
+        // ➤ Delete order (admin only)
+        app.delete('/orders/:id', verifyFBToken, verifyLibrarian, async (req, res) => {
+            const result = await ordersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+            res.send(result);
+        });
+
+    } catch (err) {
+        console.error("MongoDB Connection Error:", err);
     }
 }
+run();
 
-run().catch(console.dir);
+// Root Route
+app.get('/', (req, res) => {
+    res.send('SwiftBook server is running');
+});
 
-
+// Start Server
 app.listen(port, () => {
     console.log(`SwiftBook server is running on port: ${port}`);
-
-})
+});
