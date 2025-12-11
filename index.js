@@ -6,6 +6,7 @@ const cors = require('cors');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require("firebase-admin");
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,7 +21,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-
 // ======================================================
 // FIREBASE ADMIN SETUP
 // ======================================================
@@ -30,7 +30,6 @@ const serviceAccount = JSON.parse(decodedKey);
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
 });
-
 
 // ======================================================
 // TOKEN VERIFY MIDDLEWARE
@@ -44,13 +43,13 @@ const verifyFBToken = async (req, res, next) => {
     try {
         const decoded = await admin.auth().verifyIdToken(token);
         req.decoded_email = decoded.email;
+        req.decoded_uid = decoded.uid; // added uid for payment route
         next();
     } catch (err) {
         console.error("TOKEN ERROR:", err);
         return res.status(401).send({ message: "Invalid Token" });
     }
 };
-
 
 // ======================================================
 // MONGODB CONNECTION
@@ -65,9 +64,8 @@ const client = new MongoClient(uri, {
     }
 });
 
-let db, usersCollection, booksCollection, ordersCollection;
+let db, usersCollection, booksCollection, ordersCollection, wishlistCollection, reviewsCollection, paymentCollection;
 
-// Connect ONCE — outside routes
 async function connectDB() {
     try {
         await client.connect();
@@ -78,6 +76,7 @@ async function connectDB() {
         ordersCollection = db.collection("orders");
         wishlistCollection = db.collection("wishlist");
         reviewsCollection = db.collection("reviews");
+        paymentCollection = db.collection('payments');
 
         console.log("MongoDB Connected Successfully");
     } catch (error) {
@@ -85,7 +84,6 @@ async function connectDB() {
     }
 }
 connectDB();
-
 
 // ======================================================
 // ROLE CHECK MIDDLEWARES
@@ -109,7 +107,6 @@ const verifyAdminOrLibrarian = async (req, res, next) => {
         return res.status(403).send({ message: "Admin/Librarian only" });
     next();
 };
-
 
 // ======================================================
 // USERS API
@@ -150,7 +147,6 @@ app.delete('/users/:id', verifyFBToken, verifyAdmin, async (req, res) => {
     const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.send(result);
 });
-
 
 // ======================================================
 // BOOK API
@@ -198,7 +194,6 @@ app.delete('/books/:id', verifyFBToken, verifyAdmin, async (req, res) => {
     res.send(result);
 });
 
-
 // ======================================================
 // ORDER API
 // ======================================================
@@ -235,11 +230,8 @@ app.delete('/orders/:id', verifyFBToken, async (req, res) => {
 // ======================================================
 app.post('/wishlist', verifyFBToken, async (req, res) => {
     const wishlist = req.body;
-
-    // unify field names
     wishlist.customerEmail = wishlist.userEmail;
     delete wishlist.userEmail;
-
     wishlist.createdAt = new Date();
 
     const result = await wishlistCollection.insertOne(wishlist);
@@ -267,12 +259,10 @@ app.delete('/wishlist/:id', verifyFBToken, async (req, res) => {
 // ======================================================
 // REVIEWS API
 // ======================================================
-// REVIEWS API
 app.post('/reviews', verifyFBToken, async (req, res) => {
     try {
         const { bookId, userEmail, rating, comment, userName, userPhoto } = req.body;
 
-        // Check if user purchased the book
         const hasPurchased = await ordersCollection.findOne({
             bookId: bookId,
             customerEmail: userEmail
@@ -282,7 +272,6 @@ app.post('/reviews', verifyFBToken, async (req, res) => {
             return res.status(403).send({ message: "You must purchase this book to review" });
         }
 
-        // Prevent duplicate review
         const alreadyReviewed = await reviewsCollection.findOne({
             bookId: bookId,
             userEmail: userEmail
@@ -310,30 +299,21 @@ app.post('/reviews', verifyFBToken, async (req, res) => {
     }
 });
 
-// Get reviews by book ID
 app.get('/reviews/:bookId', async (req, res) => {
     const { bookId } = req.params;
     const reviews = await reviewsCollection.find({ bookId }).sort({ date: -1 }).toArray();
     res.send(reviews);
 });
 
-// get reviews by book id
-app.get('/reviews/:bookId', async (req, res) => {
-    const { bookId } = req.params;
-    const reviews = await reviewCollection.find({ bookId }).sort({ date: -1 }).toArray();
-    res.send(reviews);
-});
-
-// can review api
 app.get('/reviews/can/:bookId/:email', verifyFBToken, async (req, res) => {
     const { bookId, email } = req.params;
 
-    const order = await orderCollection.findOne({
+    const order = await ordersCollection.findOne({
         bookId,
         customerEmail: email
     });
 
-    const review = await reviewCollection.findOne({
+    const review = await reviewsCollection.findOne({
         bookId,
         userEmail: email
     });
@@ -343,14 +323,115 @@ app.get('/reviews/can/:bookId/:email', verifyFBToken, async (req, res) => {
     });
 });
 
+// ======================================================
+// PAYMENT API
+// ======================================================
+app.post('/create-checkout-session', async (req, res) => {
+    try {
+        const paymentInfo = req.body;
+        const amount = parseInt(paymentInfo.cost) * 100;
+
+        const session = await stripe.checkout.sessions.create({
+            line_items: [
+                {
+                    price_data: {
+                        currency: 'EUR',
+                        unit_amount: amount,
+                        product_data: {
+                            name: `Please pay for: ${paymentInfo.bookTitle || paymentInfo.parcelName}`
+                        }
+                    },
+                    quantity: 1,
+                },
+            ],
+            customer_email: paymentInfo.customerEmail,
+            mode: 'payment',
+            metadata: {
+                bookId: paymentInfo.bookId || paymentInfo.parcelId,
+                bookTitle: paymentInfo.bookTitle || paymentInfo.parcelName,
+            },
+            success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+        });
+
+        res.send({ url: session.url });
+    } catch (error) {
+        console.error("Stripe session creation failed", error);
+        res.status(500).send({ message: "Failed to create Stripe session" });
+    }
+});
+
+app.patch("/payment-success", verifyFBToken, async (req, res) => {
+    try {
+        const sessionId = req.query.session_id;
+        if (!sessionId) return res.status(400).send({ message: "Missing session_id" });
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        // Avoid duplicate record
+        const existingPayment = await paymentCollection.findOne({
+            transactionId: session.payment_intent
+        });
+
+        if (existingPayment) {
+            return res.send({
+                success: true,
+                paymentInfo: existingPayment,
+                transactionId: existingPayment.transactionId
+            });
+        }
+
+        // Create payment object
+        const payment = {
+            userId: req.decoded_uid,
+            customerEmail: session.customer_email,
+            transactionId: session.payment_intent,
+            amount: session.amount_total / 100,
+            bookId: session.metadata.bookId,
+            bookTitle: session.metadata.bookTitle,
+            paymentStatus: session.payment_status,
+            paidAt: new Date(),
+        };
+
+        // Insert into DB
+        await paymentCollection.insertOne(payment);
+
+        // Update order payment status
+        await ordersCollection.updateOne(
+            {
+                bookId: session.metadata.bookId,
+                customerEmail: session.customer_email
+            },
+            { $set: { paymentStatus: "paid" } }
+        );
+
+        // Return actual payment object (THIS FIXES YOUR ERROR)
+        res.send({
+            success: true,
+            paymentInfo: payment,
+            transactionId: session.payment_intent
+        });
+
+    } catch (error) {
+        console.error("Payment success error:", error);
+        res.status(500).send({ success: false, message: "Payment failed" });
+    }
+});
+
+app.get('/payments', verifyFBToken, async (req, res) => {
+    const email = req.query.email;
+    if (email !== req.decoded_email) return res.status(403).send({ message: "Forbidden" });
+
+    const payments = await paymentCollection.find({ customerEmail: email }).sort({ paidAt: -1 }).toArray();
+    res.send(payments);
+});
 
 // ======================================================
-// PING ROUTE — KEEPS SERVER ALIVE
+// PING ROUTE
 // ======================================================
 app.get("/ping", (req, res) => {
     res.send("pong");
 });
-
 
 // ======================================================
 // BASE API
@@ -358,7 +439,6 @@ app.get("/ping", (req, res) => {
 app.get("/", (req, res) => {
     res.send("SwiftBook server is running");
 });
-
 
 // ======================================================
 // START SERVER
