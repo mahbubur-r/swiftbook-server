@@ -77,6 +77,7 @@ async function connectDB() {
         booksCollection = db.collection("books");
         ordersCollection = db.collection("orders");
         wishlistCollection = db.collection("wishlist");
+        reviewsCollection = db.collection("reviews");
 
         console.log("MongoDB Connected Successfully");
     } catch (error) {
@@ -261,6 +262,85 @@ app.delete('/wishlist/:id', verifyFBToken, async (req, res) => {
         _id: new ObjectId(req.params.id)
     });
     res.send(result);
+});
+
+// ======================================================
+// REVIEWS API
+// ======================================================
+// REVIEWS API
+app.post('/reviews', verifyFBToken, async (req, res) => {
+    try {
+        const { bookId, userEmail, rating, comment, userName, userPhoto } = req.body;
+
+        // Check if user purchased the book
+        const hasPurchased = await ordersCollection.findOne({
+            bookId: bookId,
+            customerEmail: userEmail
+        });
+
+        if (!hasPurchased) {
+            return res.status(403).send({ message: "You must purchase this book to review" });
+        }
+
+        // Prevent duplicate review
+        const alreadyReviewed = await reviewsCollection.findOne({
+            bookId: bookId,
+            userEmail: userEmail
+        });
+
+        if (alreadyReviewed) {
+            return res.status(400).send({ message: "You already reviewed this book" });
+        }
+
+        const review = {
+            bookId,
+            userEmail,
+            userName,
+            userPhoto,
+            rating,
+            comment,
+            date: new Date()
+        };
+
+        const result = await reviewsCollection.insertOne(review);
+        res.send(result);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to add review" });
+    }
+});
+
+// Get reviews by book ID
+app.get('/reviews/:bookId', async (req, res) => {
+    const { bookId } = req.params;
+    const reviews = await reviewsCollection.find({ bookId }).sort({ date: -1 }).toArray();
+    res.send(reviews);
+});
+
+// get reviews by book id
+app.get('/reviews/:bookId', async (req, res) => {
+    const { bookId } = req.params;
+    const reviews = await reviewCollection.find({ bookId }).sort({ date: -1 }).toArray();
+    res.send(reviews);
+});
+
+// can review api
+app.get('/reviews/can/:bookId/:email', verifyFBToken, async (req, res) => {
+    const { bookId, email } = req.params;
+
+    const order = await orderCollection.findOne({
+        bookId,
+        customerEmail: email
+    });
+
+    const review = await reviewCollection.findOne({
+        bookId,
+        userEmail: email
+    });
+
+    res.send({
+        canReview: !!order && !review
+    });
 });
 
 
