@@ -1,8 +1,3 @@
-// index.js — improved reliability (no API changes)
-
-// ======================================================
-// BASIC SETUP
-// ======================================================
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -45,7 +40,7 @@ const verifyFBToken = async (req, res, next) => {
     try {
         const decoded = await admin.auth().verifyIdToken(token);
         req.decoded_email = decoded.email;
-        req.decoded_uid = decoded.uid; // added uid for payment route
+        req.decoded_uid = decoded.uid;
         next();
     } catch (err) {
         console.error("TOKEN ERROR:", err && err.message ? err.message : err);
@@ -58,17 +53,15 @@ const verifyFBToken = async (req, res, next) => {
 // ======================================================
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xr2sv5h.mongodb.net/?retryWrites=true&w=majority`;
 
-// Add connection options to be robust (tweak pool size/timeouts for your workload)
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
         strict: true,
         deprecationErrors: true,
     },
-    // Helpful options:
-    maxPoolSize: 20,           // limit pool size to avoid exhaustion (tweak as needed)
-    connectTimeoutMS: 10000,   // 10s connect timeout
-    socketTimeoutMS: 360000,   // 6 min socket timeout
+    maxPoolSize: 20,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 360000,
 });
 
 let db, usersCollection, booksCollection, ordersCollection, wishlistCollection, reviewsCollection, paymentCollection;
@@ -97,7 +90,7 @@ async function connectDBWithRetry(retries = 5, delayMs = 2000) {
                 await new Promise(r => setTimeout(r, delayMs));
             } else {
                 console.error("Exceeded MongoDB connection retries. Exiting process.");
-                process.exit(1); // fail fast if DB never connects
+                process.exit(1);
             }
         }
     }
@@ -113,7 +106,6 @@ function ensureDb(req, res, next) {
     next();
 }
 
-// Use ensureDb globally so every route benefits (keeps APIs unchanged)
 app.use(ensureDb);
 
 // ======================================================
@@ -523,7 +515,6 @@ app.patch("/payment-success", verifyFBToken, async (req, res) => {
             });
         }
 
-        // Create payment object
         const payment = {
             userId: req.decoded_uid,
             customerEmail: session.customer_email,
@@ -535,10 +526,8 @@ app.patch("/payment-success", verifyFBToken, async (req, res) => {
             paidAt: new Date(),
         };
 
-        // Insert into DB
         await paymentCollection.insertOne(payment);
 
-        // Update order payment status
         await ordersCollection.updateOne(
             {
                 bookId: session.metadata.bookId,
@@ -547,7 +536,6 @@ app.patch("/payment-success", verifyFBToken, async (req, res) => {
             { $set: { paymentStatus: "paid" } }
         );
 
-        // Return actual payment object (THIS FIXES YOUR ERROR)
         res.send({
             success: true,
             paymentInfo: payment,
