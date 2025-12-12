@@ -334,6 +334,39 @@ app.delete('/orders/:id', verifyFBToken, async (req, res) => {
     }
 });
 
+app.get("/orders/librarian/:email", verifyFBToken, async (req, res) => {
+    try {
+        const email = req.params.email;
+
+        const books = await booksCollection.find({ librarianEmail: email }).toArray();
+
+        const bookIds = books.map(book => book._id.toString());
+        const orders = await ordersCollection.find({ bookId: { $in: bookIds } }).toArray();
+
+        res.send(orders);
+    } catch (err) {
+        console.error("GET /orders/librarian/:email error:", err);
+        res.status(500).send({ message: "Failed to fetch librarian orders" });
+    }
+});
+
+app.patch("/orders/:id", verifyFBToken, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const { status } = req.body;
+
+        const result = await ordersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status } }
+        );
+
+        res.send({ success: true, status });
+    } catch (err) {
+        console.error("PATCH /orders/:id error:", err);
+        res.status(500).send({ message: "Failed to update order status" });
+    }
+});
+
 // ======================================================
 // WISHLIST API
 // ======================================================
